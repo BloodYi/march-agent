@@ -1,0 +1,8 @@
+# Merge this ingress rule into your existing tunnel configuration.
+# 将这个路由合并到你已有的隧道配置中；不要覆盖其他网站的路由。
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: /absolute/path/to/YOUR_TUNNEL_UUID.json
+ingress:
+  - hostname: agent.example.com
+    service: http://127.0.0.1:26903
+  - service: http_status:404

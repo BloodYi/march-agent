@@ -1,0 +1,48 @@
+:root { --ui-background-blur: 0px; --ui-background-shade: .20; --ui-on-accent: #123a36; }
+body { touch-action: manipulation; }
+[data-theme="light"] { --ui-on-accent: #fff; }
+[data-ui-palette="firefly"] { --accent: #83e0c6; --violet: #76cdbb; --soft-accent: rgba(131,224,198,.10); --soft-violet: rgba(118,205,187,.10); --user: #203e38; }
+[data-ui-palette="castorice"] { --accent: #c5a4f0; --violet: #ad8cff; --soft-accent: rgba(197,164,240,.10); --soft-violet: rgba(173,140,255,.12); --user: #382b4b; --ui-on-accent: #291d3f; }
+[data-theme="light"][data-ui-palette="firefly"] { --accent: #176d62; --violet: #267a69; --soft-accent: rgba(23,109,98,.08); --soft-violet: rgba(38,122,105,.08); --user: #e1f2ed; --ui-on-accent: #fff; }
+[data-theme="light"][data-ui-palette="castorice"] { --accent: #7750ad; --violet: #7854bd; --soft-accent: rgba(119,80,173,.08); --soft-violet: rgba(120,84,189,.09); --user: #f0e9f9; --ui-on-accent: #fff; }
+#new-chat-btn, .send:not(.stop) { background: var(--accent); border-color: var(--accent); color: var(--ui-on-accent); }
+#chat-bg { filter: blur(var(--ui-background-blur)); transform: scale(1.035); }
+#chat-bg-veil { background: rgba(17,21,30,var(--ui-background-shade)); }
+[data-theme="light"] #chat-bg-veil { background: rgba(243,245,248,var(--ui-background-shade)); }
+body[data-ui-characters="off"] { --rail-space: 0px; }
+body[data-ui-characters="off"] .sidebar-companion, body[data-ui-characters="off"] .character-rail { display: none; }
+#ui-settings[hidden] { display: none; }
+#ui-settings { position: fixed; inset: 0; z-index: 1500; display: flex; align-items: center; justify-content: center; padding: max(18px,env(safe-area-inset-top)) 18px max(18px,env(safe-area-inset-bottom)); background: rgba(5,9,18,.74); }
+.ui-settings-card { display: flex; flex-direction: column; width: 460px; max-width: 100%; min-width: 0; max-height: min(90vh,760px); max-height: min(760px,calc(var(--ui-viewport-height,100dvh) - 36px)); overflow: hidden; overscroll-behavior: contain; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 24px 80px rgba(0,0,0,.30); scrollbar-width: thin; }
+.ui-settings-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 22px 24px 18px; border-bottom: 1px solid var(--border); }
+.ui-settings-head h2 { margin: 0 0 3px; font-size: 19px; line-height: 1.4; }
+.ui-settings-head p, .ui-settings-note { margin: 0; color: var(--muted); font-size: 12px; }
+.ui-settings-close { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 21px; }
+.ui-settings-body { padding: 20px 24px 12px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.ui-settings-hint { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.ui-settings-section { border: 0; padding: 0; margin: 0 0 22px; min-width: 0; }
+.ui-settings-section legend, .ui-settings-label { padding: 0; margin-bottom: 10px; font-size: 13px; font-weight: 650; color: var(--text); }
+.ui-palette-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.ui-palette-option { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 9px; min-height: 82px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 5px; color: var(--text); background: var(--surface); font: inherit; font-size: 11px; cursor: pointer; }
+.ui-palette-option[aria-pressed="true"] { border-color: var(--accent); background: var(--soft-accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ui-palette-swatch { display: block; width: 29px; height: 29px; border-radius: 50%; border: 2px solid rgba(255,255,255,.14); }
+.ui-swatch-duet { background: linear-gradient(135deg,#70dbc7 50%,#ad8cff 50%); }
+.ui-swatch-firefly { background: #83e0c6; }
+.ui-swatch-castorice { background: #c5a4f0; }
+.ui-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 46px; padding: 8px 0; font-size: 13px; }
+.ui-settings-row + .ui-settings-row { border-top: 1px solid var(--border); }
+.ui-settings-row > span { min-width: 0; }
+.ui-settings-select { box-sizing: border-box; width: 168px; max-width: 64%; min-width: 0; flex-shrink: 1; min-height: 38px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--surface); font: inherit; font-size: 14px; }
+.ui-settings-row input[type="checkbox"] { width: 19px; height: 19px; margin: 0; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.ui-settings-range-group { margin: 12px 0 18px; }
+.ui-settings-range-label { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.ui-settings-range-group input { width: 100%; min-height: 30px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.ui-settings-range-group input:disabled { opacity: .4; cursor: default; }
+.ui-settings-footer { flex-shrink: 0; padding: 18px 24px 22px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 12px; }
+.ui-settings-footer button { min-height: 42px; padding: 9px 16px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); font: inherit; font-size: 13px; cursor: pointer; }
+.ui-settings-footer .ui-settings-done { background: var(--accent); color: var(--ui-on-accent); border-color: var(--accent); font-weight: 650; }
+#ui-settings :is(button,input,select):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width:768px), (max-width:1024px) and (max-height:600px) { body { height: var(--ui-viewport-height,100dvh); } #ui-settings { box-sizing: border-box; bottom: auto; height: var(--ui-viewport-height,100dvh); } }
+@media (max-width:480px) { #ui-settings { padding: 12px; } .ui-settings-card { border-radius: 16px; max-height: calc(var(--ui-viewport-height,100dvh) - 24px); } .ui-settings-head { padding: 18px 18px 14px; } .ui-settings-body { padding: 18px 18px 10px; } .ui-settings-footer { padding: 16px 18px 18px; } .ui-settings-select { font-size: 16px; } .ui-palette-option { font-size: 10.5px; } }
+
+@media (max-height:520px) { .ui-settings-head { padding-top: 12px; padding-bottom: 12px; } .ui-settings-body { padding-top: 12px; padding-bottom: 8px; } .ui-settings-footer { padding-top: 10px; padding-bottom: 10px; } }

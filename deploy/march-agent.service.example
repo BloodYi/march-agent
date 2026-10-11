@@ -1,0 +1,16 @@
+[Unit]
+Description=March Agent - Antigravity CLI Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/march-agent
+ExecStart=%h/march-agent/.venv/bin/python %h/march-agent/run.py
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

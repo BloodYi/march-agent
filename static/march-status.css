@@ -1,0 +1,108 @@
+/* Eight static poses follow real activity; motion is a small CSS treatment. */
+.scene-stage.march-status-enabled { --march-status-height: 62px; --march-status-gap: 11px; }
+#march-status {
+  position: relative; z-index: 6; display: flex; align-items: center; justify-content: center;
+  align-self: center; flex: 0 0 var(--march-status-height); height: var(--march-status-height);
+  width: min(284px, calc(100% - 20px)); min-width: 0; gap: 10px;
+  pointer-events: none; user-select: none;
+}
+.march-status-figure {
+  display: block; width: 70px; height: 70px; flex: 0 0 70px; object-fit: contain;
+  filter: drop-shadow(0 3px 10px rgba(211,163,239,.22)); transform-origin: 50% 78%;
+  animation: march-float 3.8s ease-in-out infinite;
+}
+.march-status-caption {
+  display: flex; flex-direction: column; justify-content: center; min-width: 0; gap: 2px;
+  padding: 7px 14px; border: 1px solid rgba(197,164,240,.36); border-radius: 14px;
+  color: var(--text); background: var(--scene-glass, var(--panel-alpha));
+  box-shadow: 0 4px 18px rgba(0,0,0,.12); line-height: 1.5;
+}
+.march-status-title { font-size: 12px; font-weight: 650; letter-spacing: .4px; white-space: nowrap; }
+.march-status-detail { font-size: 10px; color: var(--muted); white-space: nowrap; }
+#march-status[data-state="thinking"] .march-status-figure,
+#march-status[data-state="waiting"] .march-status-figure { animation: march-breathe 2s ease-in-out infinite; }
+#march-status[data-state="searching"] .march-status-figure,
+#march-status[data-state="working"] .march-status-figure { animation: march-work 1.3s ease-in-out infinite; }
+#march-status[data-state="done"] .march-status-caption { border-color: var(--accent); }
+#march-status[data-state="error"] .march-status-caption { border-color: var(--danger); }
+#march-status[data-state="error"] .march-status-title { color: var(--danger); }
+#march-status[data-state="paused"] .march-status-figure { animation: none; }
+.scene-stage.march-status-enabled > .scene-flourish { top: calc(var(--march-status-height) + var(--march-status-gap)); }
+
+/* The original A/star is replaced after every existing render, with no bubble rewrite. */
+body .msg.assistant .avatar.march-avatar,
+body[data-ui-scene] .msg.assistant .avatar.march-avatar {
+  width: 42px; height: 42px; flex: 0 0 42px; margin-top: 0;
+  background: #192332; border: 1px solid rgba(226,170,239,.55); border-radius: 50%; overflow: hidden; box-shadow: 0 2px 8px rgba(171,118,208,.16); font-size: 0;
+  color: transparent; overflow: visible;
+}
+body .msg.assistant .avatar.march-avatar::before,
+body .msg.assistant .avatar.march-avatar::after,
+body[data-ui-scene] .msg.assistant .avatar.march-avatar::before,
+body[data-ui-scene] .msg.assistant .avatar.march-avatar::after { content: none; display: none; }
+body .msg.assistant .avatar.march-avatar > img {
+  display: block; width: 100%; height: 100%; object-fit: contain; border: 0; border-radius: 50%;
+  background: transparent; filter: drop-shadow(0 2px 4px rgba(197,164,240,.12));
+}
+body[data-ui-scene="original"] #march-status { margin-top: 8px; margin-bottom: 3px; }
+@keyframes march-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes march-breathe { 0%, 100% { transform: scale(1); } 50% { transform: translateY(-1px) scale(1.025); } }
+@keyframes march-work { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-2px) rotate(1deg); } }
+@media (max-width: 768px) {
+  .scene-stage.march-status-enabled { --march-status-height: 0px !important; --march-status-gap: 0px !important; }
+  #march-status[data-state="idle"] { display: none !important; }
+  #march-status {
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 68px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    height: 32px;
+    width: auto;
+    min-width: 0;
+    max-width: calc(100% - 24px);
+    padding: 3px 12px 3px 6px;
+    border-radius: 20px;
+    background: rgba(16, 23, 36, 0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--accent);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+    gap: 6px;
+    pointer-events: none;
+    box-sizing: border-box;
+  }
+  [data-theme="light"] #march-status {
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+  }
+  .march-status-figure {
+    width: 24px !important;
+    height: 24px !important;
+    flex: 0 0 24px !important;
+  }
+  .march-status-caption {
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 4px !important;
+    line-height: 1 !important;
+  }
+  .march-status-title {
+    font-size: 11px !important;
+    line-height: 1 !important;
+  }
+  .march-status-detail {
+    display: none !important;
+  }
+  body .msg.assistant .avatar.march-avatar,
+  body[data-ui-scene] .msg.assistant .avatar.march-avatar { width: 34px; height: 34px; flex-basis: 34px; }
+  body[data-ui-scene="original"] #march-status { margin: 0; }
+  .scene-stage.march-status-enabled > .scene-flourish { top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #march-status, #march-status * { animation: none !important; transition: none !important; }
+}

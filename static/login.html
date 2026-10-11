@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <title>登录 · Antigravity Chat</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+    }
+    .bg {
+      position: fixed; inset: 0;
+      background: url("/static/bg-login.jpg") center 30%/cover no-repeat;
+      filter: blur(4px) brightness(.82) saturate(1.05);
+      transform: scale(1.06);
+    }
+    .veil {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(120% 90% at 50% 10%, rgba(20,12,40,.10) 0%, rgba(10,8,24,.55) 75%),
+        linear-gradient(180deg, rgba(10,8,24,.25) 0%, rgba(10,8,24,.05) 40%, rgba(10,8,24,.45) 100%);
+    }
+    .wrap {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      padding-bottom: max(24px, env(safe-area-inset-bottom));
+    }
+    .card {
+      width: 360px; max-width: 100%;
+      max-height: calc(100vh - 48px);
+      max-height: calc(100dvh - 48px);
+      overflow-y: auto; overscroll-behavior: contain;
+      padding: 36px 32px 32px;
+      border-radius: 20px;
+      background: rgba(22,18,38,.70);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      backdrop-filter: blur(18px) saturate(1.2);
+      border: 1px solid rgba(162,225,210,.24);
+      box-shadow: 0 24px 64px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.08);
+      color: #f2f0fa;
+      animation: rise .45s ease;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(14px); }
+    }
+    .logo-row { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .logo-row img { width: 40px; height: 40px; border-radius: 10px; }
+    .logo-row h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .3px; }
+    .sub { margin: 0 0 22px; color: #c8c1d9; font-size: 13.5px; }
+    label { display: block; font-size: 12.5px; font-weight: 500; color: #dce5e8; margin: 14px 0 6px; }
+    input {
+      width: 100%; padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(209,198,240,.28);
+      background: rgba(14,12,27,.36);
+      color: #fff; font-family: inherit; font-size: 16px;
+      outline: none;
+      transition: border-color .15s, background .15s, box-shadow .15s;
+    }
+    input::placeholder { color: #aaa3bf; }
+    input:hover { border-color: rgba(209,198,240,.46); }
+    input:focus { border-color: #9adcca; background: rgba(14,12,27,.48); box-shadow: 0 0 0 3px rgba(154,220,202,.10); }
+    input:focus-visible, button:focus-visible { outline: 2px solid #b3f0de; outline-offset: 3px; }
+    .err {
+      min-height: 20px; margin: 12px 0 4px;
+      color: #ffc0c9; font-size: 13px; text-align: center;
+    }
+    button {
+      width: 100%; margin-top: 10px; padding: 13px;
+      border: 1px solid rgba(205,191,246,.30); border-radius: 12px;
+      background: linear-gradient(135deg, #6751b9, #7954b7);
+      color: #fff; font-family: inherit; font-size: 15.5px; font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 24px rgba(101,75,173,.30), inset 0 1px 0 rgba(255,255,255,.10);
+      transition: transform .1s, box-shadow .15s, opacity .15s;
+    }
+    button:hover { box-shadow: 0 10px 28px rgba(124,108,246,.40), inset 0 1px 0 rgba(255,255,255,.15); }
+    button:active { transform: scale(.985); }
+    button:disabled { opacity: .6; cursor: default; }
+    .foot { margin-top: 18px; text-align: center; color: #b9b2cc; font-size: 12px; }
+    @media (max-width: 420px) {
+      .card { padding: 30px 24px 26px; border-radius: 16px; }
+      .logo-row h1 { font-size: 17px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .card { animation: none; }
+      input, button { transition: none; }
+      button:active { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="veil"></div>
+  <div class="wrap">
+    <form class="card" id="login-form" autocomplete="on">
+      <div class="logo-row">
+        <img src="/static/logo.png" alt="logo" />
+        <h1>Antigravity Chat</h1>
+      </div>
+      <p class="sub">登录以继续</p>
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" placeholder="用户名" />
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="密码" />
+      <div class="err" id="err" role="alert" aria-atomic="true"></div>
+      <button type="submit" id="submit">登 录</button>
+      <div class="foot">通过安全隧道连接 · 会话保留 7 天</div>
+    </form>
+  </div>
+  <script>
+    (async () => {
+      try {
+        const r = await fetch("/api/me");
+        if (r.ok) { location.href = "/"; return; }
+      } catch (e) {}
+    })();
+
+    const form = document.getElementById("login-form");
+    const err = document.getElementById("err");
+    const submit = document.getElementById("submit");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      submit.disabled = true;
+      submit.textContent = "登录中…";
+      try {
+        const r = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value,
+          }),
+        });
+        if (r.ok) {
+          location.href = "/";
+        } else {
+          err.textContent = "用户名或密码不正确";
+        }
+      } catch (e) {
+        err.textContent = "连接失败，请重试";
+      } finally {
+        submit.disabled = false;
+        submit.textContent = "登 录";
+      }
+    });
+  </script>
+</body>
+</html>
