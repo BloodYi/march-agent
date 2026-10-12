@@ -18,6 +18,7 @@ The application uses Python, FastAPI, and plain HTML/CSS/JavaScript. No frontend
 - Exact returned model fields, independent of the selected preset. Values such as `fn`, `exp-a`, `exp-b`, and future variants are retained without a hardcoded routing table.
 - Image/file uploads, server workspace selection, and downloads of generated files from allowed directories.
 - SSE chat plus `/v1/chat/completions` and `/v1/models` compatibility endpoints. These endpoints share the site's session authentication.
+- GitHub update notifications and deliberate installation from the sidebar, with environment preparation, backups, and startup verification.
 
 ## Deployment
 
@@ -78,7 +79,29 @@ systemctl --user enable --now march-agent
 systemctl --user status march-agent
 ```
 
-An administrator can run `sudo loginctl enable-linger "$USER"` to keep the user service active after SSH logout. After updating, reinstall requirements and restart `march-agent`; retain `.env`, account storage, and conversation data.
+An administrator can run `sudo loginctl enable-linger "$USER"` to keep the user service active after SSH logout.
+
+## Web update checks
+
+After signing in, use **检查更新 (Check updates)** at the bottom of the sidebar. On a phone, open the top-left menu first. The page checks on opening and every 30 minutes while visible, and displays a notification when a new version is available. Installation always requires a click.
+
+Manual checks use a minimum 30-second interval; ordinary results are cached on the server for 15 minutes. **更新到最新版 (Update to latest)** installs the verified commit from the configured public GitHub repository's `main` branch. Version checks make no model requests and use no model quota.
+
+Installation requires Linux, Git, `python3-venv`, a systemd user service, and a project directory writable by the website's user. Use the Git clone and service template above, with a single website process. Configure in `.env`:
+
+```dotenv
+AGY_WEB_UPDATE_ENABLED=1
+AGY_UPDATE_REPO=BloodYi/march-agent
+AGY_UPDATE_SERVICE=march-agent.service
+```
+
+The service name must match the systemd user service running this website. A public fork can change `AGY_UPDATE_REPO`, provided Git `origin` matches it. Set `AGY_WEB_UPDATE_ENABLED=0` to disable web installation. ZIP-only installations lack Git version metadata and show why one-click installation is unavailable.
+
+The updater downloads source, creates a fresh Python environment, installs requirements, and checks startup before switching versions. The existing site stays active during preparation. An active reply prevents an update from starting, and new messages are paused during installation. Tracked local edits, conflicting custom files, or unrelated remote history stop the update and preserve local content.
+
+Only project source is synchronized. `.env`, accounts, conversations, uploads, and the listening port remain local. Backups and job records are kept under `.march-agent-updater/` on the server; Git ignores them and they are never uploaded to GitHub. Switching versions briefly restarts the website. A failed startup check triggers recovery of the previous source and environment; failed recovery is reported for administrator attention. Backups are retained for administrators to manage according to storage and recovery needs.
+
+Restarting invalidates the current website login. The update window can continue showing this job's progress. When finished, use **刷新页面 (Refresh page)** and sign in with the same credentials. The refresh button temporarily saves an unsent text draft. If GitHub is unavailable, a check reports failure rather than claiming the installation is current.
 
 ## Configuration
 
@@ -111,7 +134,7 @@ Upstream experiments can change: **Medium is not guaranteed to always return exp
 .venv/bin/python scripts/test.py
 ```
 
-Tests use a temporary project and user directory, read no account credentials, and make no online model calls. GitHub Actions runs the same checks on Python 3.10 and 3.12. Coverage includes returned model fields, request isolation, Medium arguments, thinking separation, forwarding errors, cancellation cleanup, authentication, and file endpoints.
+Tests use a temporary project and user directory, read no account credentials, and make no online model calls. GitHub Actions runs the same checks on Python 3.10 and 3.12. Coverage includes returned model fields, request isolation, Medium arguments, thinking separation, forwarding errors, cancellation cleanup, authentication, file endpoints, update authorization, reply/update locking, runtime data preservation, and failed-update recovery.
 
 ## Attribution
 
