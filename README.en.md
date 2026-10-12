@@ -14,6 +14,7 @@ The application uses Python, FastAPI, and plain HTML/CSS/JavaScript. No frontend
 - Create, resume, rename, pin, and delete conversations. Server-side message storage survives refreshes; elapsed conversation time does not automatically delete history.
 - Model list from `agy models`, account management, and quota information.
 - Streaming replies, separate upstream-provided thinking, tool events, and stop controls. Content absent from the upstream response is not invented.
+- A 15-second heartbeat during model/tool waits, explicit stream completion checks, and partial-reply preservation on disconnection. Interrupted requests are not replayed automatically.
 - Request-scoped errors: native session summaries can carry an old failure. It becomes a historical notice only when native steps prove it predates the completed current turn; current or unverifiable failures remain errors.
 - Exact returned model fields, independent of the selected preset. Values such as `fn`, `exp-a`, `exp-b`, and future variants are retained without a hardcoded routing table.
 - Image/file uploads, server workspace selection, and downloads of generated files from allowed directories.
@@ -134,6 +135,7 @@ Upstream experiments can change: **Medium is not guaranteed to always return exp
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python scripts/test.py
+node tests/test_sse_client.mjs
 ```
 
 Tests use a temporary project and user directory, read no account credentials, and make no online model calls. GitHub Actions runs the same checks on Python 3.10 and 3.12. Coverage includes returned model fields, request isolation, Medium arguments, thinking separation, forwarding errors, cancellation cleanup, authentication, file endpoints, update authorization, reply/update locking, runtime data preservation, and failed-update recovery.

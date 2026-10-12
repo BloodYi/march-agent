@@ -2090,6 +2090,9 @@ async def delete_account_ep(account_id: str) -> dict:
     return _delete_stored_account(account_id)
 
 
+_SSE_HEARTBEAT_SECONDS = 15
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     """SSE stream of the assistant reply for the custom UI."""
@@ -2099,19 +2102,41 @@ async def chat(req: ChatRequest):
     prompt, cid, continue_last, user_id = await _resolve_prompt_and_session(req)
 
     async def event_gen():
-        yield f"data: {json.dumps({'event': 'start'})}\n\n"
+        stream = _stream_agy(
+            prompt=prompt, model=req.model, cwd=req.cwd, conversation_id=cid,
+            continue_last=continue_last, user_id=user_id,
+        )
+        pending = None
         try:
-            async for ev in _stream_agy(
-                prompt=prompt,
-                model=req.model,
-                cwd=req.cwd,
-                conversation_id=cid,
-                continue_last=continue_last,
-                user_id=user_id,
-            ):
+            yield f"data: {json.dumps({'event': 'start'})}\n\n"
+            while True:
+                if pending is None:
+                    pending = asyncio.create_task(anext(stream))
+                # A heartbeat must not cancel the CLI read or start another turn.
+                ready, _ = await asyncio.wait({pending}, timeout=_SSE_HEARTBEAT_SECONDS)
+                if not ready:
+                    yield ": keep-alive\n\n"
+                    continue
+                finished, pending = pending, None
+                try:
+                    ev = finished.result()
+                except StopAsyncIteration:
+                    break
                 yield f"data: {json.dumps(ev)}\n\n"
         except Exception as exc:  # noqa: BLE001
+            logger.warning("Chat stream failed (%s)", type(exc).__name__)
             yield f"data: {json.dumps({'event': 'error', 'error': str(exc)})}\n\n"
+        finally:
+            from anyio import CancelScope
+            # The HTTP disconnect scope must not interrupt AGY's awaited cleanup.
+            with CancelScope(shield=True):
+                if pending is not None:
+                    pending.cancel()
+                    try:
+                        await pending
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                await stream.aclose()
         yield f"data: {json.dumps({'event': 'done'})}\n\n"
 
     return StreamingResponse(

@@ -93,6 +93,7 @@ def load_functions(scratch, saved):
               tempfile=tempfile, asyncio=asyncio, codecs=codecs, SCRATCH=scratch,
               AGY_BIN="fake-agy", AGY_TIMEOUT=0, AGY_SANDBOX=False,
               AGY_OUTPUT_FORMAT="stream-json", AGY_PERSIST_CONVERSATIONS=True,
+              _SSE_HEARTBEAT_SECONDS=15,
               _within_allowed=lambda cwd: cwd, _agy_environment=lambda: {},
               logger=types.SimpleNamespace(warning=lambda *args: None),
               StreamingResponse=Response, HTTPException=HTTPError,
