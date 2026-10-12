@@ -173,6 +173,31 @@ class RouteBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("--effort", argv)
         self.assertNotIn("--model", argv)
 
+    async def test_historical_result_error_does_not_fail_completed_current_reply(self):
+        objects = events()
+        objects[-1]['result'].update(status='ERROR', error='Old capacity error')
+        self.ns['read_session_historical_error'] = lambda *args: {'step_index': 2, 'error': 'Old capacity error'}
+        self.ns['_agy_environment'] = lambda: {'HOME': str(self.scratch)}
+        with self.launch(objects):
+            records = await self.chat('gemini-3.8-flash-medium', True)
+        self.assertFalse([record for record in records if record['event'] == 'error'])
+        notice = next(record for record in records if record['event'] == 'notice')
+        self.assertEqual(notice['scope'], 'historical')
+        self.assertEqual(notice['detail'], 'Old capacity error')
+        self.assertNotIn('error', notice)  # The existing UI treats any error field as a failure.
+        self.assertTrue(any(record.get('response') == 'OK' for record in records))
+
+    async def test_current_unknown_or_nonzero_exit_preserves_result_error(self):
+        for proof, exit_code in ((None, 0), ({'step_index':2, 'error':'Old capacity error'}, 1)):
+            objects = events()
+            objects[-1]['result'].update(status='ERROR', error='Old capacity error')
+            self.ns['read_session_historical_error'] = lambda *args: proof
+            self.ns['_agy_environment'] = lambda: {'HOME': str(self.scratch)}
+            with self.subTest(proof=proof,exit_code=exit_code), self.launch(objects,exit_code=exit_code):
+                records = await self.chat('gemini-3.8-flash-medium', True)
+            self.assertTrue(any(record.get('error') == 'Old capacity error' and record['event'] == 'error' for record in records))
+            self.assertFalse(any(record['event'] == 'notice' for record in records))
+
     async def test_probe_has_own_cwd_no_resume_no_history_write_and_exact_evidence(self):
         with self.launch():
             result = await self.ns["inspect_selected_route"](types.SimpleNamespace(model="gemini-3.8-flash-medium"))

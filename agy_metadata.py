@@ -185,6 +185,45 @@ def read_session_models(home, conversation_id, observed_steps):
         return []
 
 
+def read_session_historical_error(home, conversation_id, observed_steps, response_steps, error):
+    """Confirm a CLI 1.3.3 aggregate error precedes this completed execution."""
+    path = _session_path(home, conversation_id, observed_steps)
+    if path is None or not response_steps or not set(response_steps).issubset(observed_steps):
+        return None
+    try:
+        with closing(sqlite3.connect(path.absolute().as_uri() + "?mode=ro", uri=True, timeout=0.2)) as connection:
+            connection.execute("BEGIN")
+            executions = _step_executions(connection, response_steps)
+            if (executions is None or set(executions) != set(response_steps) or not all(executions.values())
+                    or len(set(executions.values())) != 1):
+                return None
+            last = connection.execute("SELECT idx,step_type,status FROM steps ORDER BY idx DESC LIMIT 1").fetchone()
+            # Native enum 15 = planner response, 3 = completed. A later step or
+            # another concurrent execution makes the scope unprovable.
+            if last != (max(response_steps), 15, 3):
+                return None
+            row = connection.execute("SELECT idx,step_payload FROM steps WHERE step_type=17 "
+                                     "ORDER BY idx DESC LIMIT 1").fetchone()
+            if row is None or row[0] >= min(observed_steps):
+                return None
+            payload = _fields(row[1], {1, 4, 24})
+            if payload.get(1) != [(0, 17)] or payload.get(4) != [(0, 3)]:
+                return None
+            messages = payload.get(24, [])
+            if len(messages) != 1 or messages[0][0] != 2:
+                return None
+            details = _fields(messages[0][1], {3}).get(3, [])
+            if len(details) != 1 or details[0][0] != 2:
+                return None
+            # CortexStepErrorMessage.error(3) -> CortexErrorDetails.message(2).
+            message = _string(_fields(details[0][1], {2}), 2)
+            if message == error:
+                return {"step_index": row[0], "error": message}
+    except (sqlite3.Error, OSError, ValueError, UnicodeDecodeError, TypeError):
+        pass
+    return None
+
+
 def planner_thinking(data):
     """gemini_coder.Step.planner_response (20).thinking (3); no signature/raw fields."""
     try:

@@ -14,6 +14,7 @@ The application uses Python, FastAPI, and plain HTML/CSS/JavaScript. No frontend
 - Create, resume, rename, pin, and delete conversations. Server-side message storage survives refreshes; elapsed conversation time does not automatically delete history.
 - Model list from `agy models`, account management, and quota information.
 - Streaming replies, separate upstream-provided thinking, tool events, and stop controls. Content absent from the upstream response is not invented.
+- Request-scoped errors: native session summaries can carry an old failure. It becomes a historical notice only when native steps prove it predates the completed current turn; current or unverifiable failures remain errors.
 - Exact returned model fields, independent of the selected preset. Values such as `fn`, `exp-a`, `exp-b`, and future variants are retained without a hardcoded routing table.
 - Image/file uploads, server workspace selection, and downloads of generated files from allowed directories.
 - SSE chat plus `/v1/chat/completions` and `/v1/models` compatibility endpoints. These endpoints share the site's session authentication.

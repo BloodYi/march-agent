@@ -28,7 +28,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool
-from agy_metadata import read_session_models, read_session_thinking
+from agy_metadata import read_session_models, read_session_thinking, read_session_historical_error
 from agy_client_profile import DesktopProfileProxy
 
 logger = logging.getLogger("antigravity-chat")
@@ -1211,7 +1211,7 @@ def _parse_ndjson_line(line_str: str) -> list[dict]:
             if str(status).upper() not in ("SUCCESS", "COMPLETED", "OK"):
                 error = res.get("error") or obj.get("error") or res.get("response")
                 if error:
-                    events.append({"event": "error", "error": str(error)})
+                    events.append({"event": "error", "error": str(error), "_result_error": True})
 
         else:
             delta = obj.get("text_delta") or obj.get("delta") or obj.get("text")
@@ -1340,10 +1340,14 @@ async def _stream_agy(
             logger.warning("Timed out reaping agy process")
 
     active_cid, active_cid_ambiguous, observed_steps, response_steps = None, False, set(), set()
-    coverage_unknown = False
+    coverage_unknown, current_response_seen = False, False
+    pending_result_errors = []
 
-    def _enrich_event(ev: dict) -> dict:
-        nonlocal active_cid, active_cid_ambiguous, coverage_unknown
+    def _enrich_event(ev: dict) -> dict | None:
+        nonlocal active_cid, active_cid_ambiguous, coverage_unknown, current_response_seen
+        if ev.pop("_result_error", False):
+            pending_result_errors.append(ev)
+            return None
         cli_cid = ev.pop("_cli_init_cid", None)
         if isinstance(cli_cid, str):
             if active_cid is not None and active_cid != cli_cid:
@@ -1360,6 +1364,8 @@ async def _stream_agy(
             coverage_unknown = True
         _merge_response_evidence(route_info, ev.pop("_response_evidence", []))
         ev_type = ev.get("event")
+        if ev_type == "delta" and step_type == "agent_response" and str(ev.get("delta", "")).strip():
+            current_response_seen = True
         if ev_type == "result":
             _merge_response_evidence(route_info, _request_log_evidence(log_path))
         if ev_type in ("init", "result", "metadata"):
@@ -1389,6 +1395,8 @@ async def _stream_agy(
                     parsed_events = _parse_ndjson_line(line)
                     for ev in parsed_events:
                         enriched = _enrich_event(ev)
+                        if enriched is None:
+                            continue
                         if persist_conversation and enriched.get("event") == "init" and enriched.get("conversation_id") and AGY_PERSIST_CONVERSATIONS:
                             await save_conversation_async(user_id, enriched["conversation_id"])
                         yield enriched
@@ -1404,6 +1412,8 @@ async def _stream_agy(
                 parsed_events = _parse_ndjson_line(buffered_line)
                 for ev in parsed_events:
                     enriched = _enrich_event(ev)
+                    if enriched is None:
+                        continue
                     if persist_conversation and enriched.get("event") == "init" and enriched.get("conversation_id") and AGY_PERSIST_CONVERSATIONS:
                         await save_conversation_async(user_id, enriched["conversation_id"])
                     yield enriched
@@ -1459,6 +1469,20 @@ async def _stream_agy(
             if profile_proxy:
                 await asyncio.to_thread(profile_proxy.close)
             log_dir.cleanup()
+    for event in pending_result_errors:
+        historical = None
+        if (stream_error is None and proc.returncode == 0 and current_response_seen
+                and run_env.get("HOME") and active_cid and not active_cid_ambiguous and response_steps):
+            try:
+                historical = await asyncio.to_thread(read_session_historical_error, run_env["HOME"],
+                                                    active_cid, observed_steps, response_steps, event["error"])
+            except Exception:
+                logger.warning("Could not verify aggregate error scope")
+        if historical:
+            yield {"event": "notice", "scope": "historical", "step_index": historical["step_index"],
+                   "detail": historical["error"]}
+        else:
+            yield event
     for event in native_thinking:
         yield event
     _update_route_coverage(route_info, response_steps, coverage_unknown)
