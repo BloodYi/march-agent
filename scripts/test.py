@@ -9,7 +9,8 @@ import tempfile
 root=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='march-agent-tests-') as temporary:
     copy=Path(temporary)/'project';copy.mkdir()
-    for name in ('app.py','agy_metadata.py','agy_client_profile.py','run.py'):
+    for name in ('app.py','agy_metadata.py','agy_client_profile.py','run.py',
+                 'project_updates.py','update_common.py','update_worker.py'):
         shutil.copy2(root/name,copy/name)
     for name in ('static','tests'):
         shutil.copytree(root/name,copy/name,ignore=shutil.ignore_patterns('__pycache__'))

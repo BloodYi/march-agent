@@ -1,0 +1,32 @@
+#project-update-button { display:flex; gap:12px; align-items:center; width:100%; min-height:42px; padding:9px 12px; border:0; border-radius:10px; color:var(--muted); background:transparent; cursor:pointer; text-align:left; font:inherit; font-size:14px; }
+#project-update-button:hover { color:var(--text); background:var(--soft-accent); }
+#project-update-button[data-update="available"] { color:var(--accent); }
+.update-badge { margin-left:auto; padding:2px 7px; border-radius:20px; background:var(--accent); color:var(--bg); font-size:11px; font-weight:700; }
+.update-badge[hidden] { display:none; }
+#menu-btn[data-update="available"]::after { content:""; position:absolute; top:3px; right:3px; width:7px; height:7px; background:var(--accent); border-radius:50%; box-shadow:0 0 8px var(--accent); }
+#menu-btn { position:relative; }
+.project-update-dialog { width:min(520px,calc(100% - 28px)); max-height:calc(100dvh - 40px); padding:0; border:1px solid var(--border); border-radius:20px; color:var(--text); background:var(--bg); box-shadow:0 18px 80px #0006; overflow:auto; }
+.project-update-dialog::backdrop { background:#050913a8; backdrop-filter:blur(5px); }
+.project-update-head { display:flex; align-items:flex-start; justify-content:space-between; padding:24px 24px 18px; border-bottom:1px solid var(--border); gap:12px; }
+.project-update-head h2 { margin:0 0 6px; font-size:20px; }
+.project-update-head p { margin:0; font-size:13px; color:var(--muted); line-height:1.6; }
+.project-update-close { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:25px; width:32px; height:32px; }
+.project-update-body { padding:20px 24px; }
+.project-update-versions { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:0 0 18px; }
+.project-update-version { padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--panel); }
+.project-update-version dt { color:var(--muted); font-size:12px; margin-bottom:7px; }
+.project-update-version dd { margin:0; font-family:ui-monospace,monospace; font-size:18px; }
+.project-update-status { min-height:24px; margin:0 0 10px; line-height:1.6; font-size:14px; }
+.project-update-progress { width:100%; height:5px; margin-bottom:14px; accent-color:var(--accent); }
+.project-update-progress[hidden] { display:none; }
+.project-update-note { color:var(--muted); font-size:12px; line-height:1.8; margin:10px 0 0; }
+.project-update-note a { color:var(--accent); }
+.project-update-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:10px; padding:16px 24px 22px; }
+.project-update-actions button { padding:10px 16px; min-height:42px; border-radius:10px; border:1px solid var(--border); background:var(--panel); color:var(--text); cursor:pointer; font:inherit; font-size:13px; }
+.project-update-actions .update-primary { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:700; }
+.project-update-actions button:disabled { opacity:.45; cursor:default; }
+.project-update-actions button[hidden] { display:none; }
+.project-update-toast { position:fixed; z-index:45; right:16px; max-width:calc(100% - 32px); padding:12px 18px; border:1px solid var(--accent); border-radius:14px; background:var(--bg); color:var(--text); box-shadow:0 8px 28px #0005; cursor:pointer; font:inherit; font-size:13px; }
+.project-update-toast[hidden] { display:none; }
+.project-update-dialog :focus-visible, #project-update-button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media(max-width:480px) { .project-update-head,.project-update-body { padding:18px; } .project-update-actions { padding:12px 18px 18px; } .project-update-actions button { flex:1; } .project-update-version { padding:12px; } }

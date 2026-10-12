@@ -30,6 +30,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool
 from agy_metadata import read_session_models, read_session_thinking, read_session_historical_error
 from agy_client_profile import DesktopProfileProxy
+from project_updates import ProjectUpdater
+from update_common import UpdateError
 
 logger = logging.getLogger("antigravity-chat")
 
@@ -556,6 +558,7 @@ _AUTH_ENABLED = bool(BASIC_AUTH_USER and BASIC_AUTH_PASS)
 _SESSION_COOKIE = "agy_session"
 _SESSION_TTL = 7 * 24 * 3600  # 7 days
 _sessions: dict[str, float] = {}  # token -> expiry timestamp
+project_updater = ProjectUpdater(Path(__file__).parent, PORT)
 
 # Paths reachable without a session (login page/API, health checks, artwork).
 _AUTH_EXEMPT = {"/healthz", "/favicon.ico", "/favicon.png", "/login", "/api/login", "/api/me"}
@@ -591,12 +594,53 @@ def _drop_session(request: Request) -> None:
 @app.middleware("http")
 async def _session_auth(request: Request, call_next):
     path = request.url.path
+    # A job-scoped read capability lets the initiating browser observe a restart.
+    # This endpoint checks its own short-lived token and cannot start updates.
+    if request.method == 'GET' and re.fullmatch(r'/api/updates/jobs/[a-f0-9]{32}', path):
+        return await call_next(request)
     if _AUTH_ENABLED and path not in _AUTH_EXEMPT and not path.startswith(_AUTH_EXEMPT_PREFIX):
         if not _valid_session(request):
             if path.startswith("/api/"):
                 return JSONResponse(status_code=401, content={"detail": "login required"})
             return RedirectResponse(url="/login", status_code=302)
     return await call_next(request)
+
+
+@app.get('/api/updates')
+async def updates_status(check: bool = False):
+    return await asyncio.to_thread(project_updater.check if check else project_updater.info)
+
+
+@app.post('/api/updates/check')
+async def updates_check():
+    return await asyncio.to_thread(project_updater.check, True)
+
+
+class UpdateRequest(BaseModel):
+    commit: str
+
+
+@app.post('/api/updates/install', status_code=202)
+async def updates_install(request: Request, req: UpdateRequest):
+    if not _AUTH_ENABLED or not _valid_session(request):
+        raise HTTPException(status_code=403, detail='请先登录，再更新项目。')
+    origin = request.headers.get('origin')
+    expected = str(request.url).split('/api/', 1)[0]
+    if ((origin and origin.rstrip('/') != expected)
+            or request.headers.get('x-requested-with') != 'MarchAgent'):
+        raise HTTPException(status_code=403, detail='请在本站的更新窗口中操作。')
+    try:
+        return await asyncio.to_thread(project_updater.start, req.commit)
+    except UpdateError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+@app.get('/api/updates/jobs/{job_id}')
+async def updates_job(job_id: str, request: Request):
+    try:
+        return project_updater.read_job(job_id, request.headers.get('x-update-token', ''))
+    except UpdateError as error:
+        raise HTTPException(status_code=403, detail=str(error))
 
 
 # --------------------------------------------------------------------------- #
@@ -1279,7 +1323,11 @@ async def _stream_agy(
     log_path = Path(log_dir.name) / "cli.log"
     argv.extend(["--log-file", str(log_path)])
     profile_proxy = None
+    update_lease = None
     try:
+        updater = globals().get('project_updater')
+        if updater:
+            update_lease = updater.acquire_turn()
         run_env = _agy_environment()
         if run_env.get("AGY_UPSTREAM_PROFILE", "native").lower() == "desktop":
             profile_proxy = DesktopProfileProxy(
@@ -1296,12 +1344,16 @@ async def _stream_agy(
             env=run_env,
         )
     except Exception:
+        if update_lease:
+            update_lease.close()
         if profile_proxy:
             await asyncio.to_thread(profile_proxy.close)
         log_dir.cleanup()
         yield {"event": "metadata", "route_info": route_info}
         raise
     except BaseException:
+        if update_lease:
+            update_lease.close()
         if profile_proxy:
             await asyncio.to_thread(profile_proxy.close)
         log_dir.cleanup()
@@ -1466,9 +1518,13 @@ async def _stream_agy(
                     except Exception:
                         logger.warning("Could not read agy thinking metadata")
         finally:
-            if profile_proxy:
-                await asyncio.to_thread(profile_proxy.close)
-            log_dir.cleanup()
+            try:
+                if profile_proxy:
+                    await asyncio.to_thread(profile_proxy.close)
+            finally:
+                if update_lease:
+                    update_lease.close()
+                log_dir.cleanup()
     for event in pending_result_errors:
         historical = None
         if (stream_error is None and proc.returncode == 0 and current_response_seen
@@ -1495,6 +1551,7 @@ async def _stream_agy(
 async def healthz() -> dict:
     return {
         "status": "ok",
+        "version": project_updater.running_version,
         "backend": "agy",
         "upstream_profile": os.getenv("AGY_UPSTREAM_PROFILE", "native"),
         "sandbox": AGY_SANDBOX,
