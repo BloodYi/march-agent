@@ -87,6 +87,8 @@ After signing in, use **检查更新 (Check updates)** at the bottom of the side
 
 Manual checks use a minimum 30-second interval; ordinary results are cached on the server for 15 minutes. **更新到最新版 (Update to latest)** installs the verified commit from the configured public GitHub repository's `main` branch. Version checks make no model requests and use no model quota.
 
+These updates cover the website project, separately from the native `agy` executable. Updating the website does not upgrade `agy`, reauthorize Google accounts, or change models. Manage CLI upgrades separately using its official instructions.
+
 Installation requires Linux, Git, `python3-venv`, a systemd user service, and a project directory writable by the website's user. Use the Git clone and service template above, with a single website process. Configure in `.env`:
 
 ```dotenv
