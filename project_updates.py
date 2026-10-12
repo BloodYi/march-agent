@@ -136,7 +136,7 @@ class ProjectUpdater:
             job_file = jobs/(job_id+'.json')
             write_json(job_file, job); write_json(directory/'active.json', {'id':job_id})
             try:
-                command = ['systemd-run', '--user', '--quiet', '--collect',
+                command = ['systemd-run', '--user', '--quiet', '--collect', '--no-block',
                            '--unit=march-agent-update-'+job_id, '--property=Type=oneshot',
                            '--property=RuntimeMaxSec=1500', '--working-directory='+str(self.root),
                            str(Path(getattr(sys, '_base_executable', sys.executable)).resolve()),
