@@ -96,7 +96,8 @@ def perform(job):
         prepare_source(root, stage, target)
         (backup/'source.tar').write_bytes(git(root, 'archive', '--format=tar', job['previous'], binary=True))
         progress(job, 'preparing', '正在准备新版运行环境…')
-        run([sys.executable, '-m', 'venv', str(environment_dir)], job)
+        base_python = str(Path(getattr(sys, '_base_executable', sys.executable)).resolve())
+        run([base_python, '-m', 'venv', str(environment_dir)], job)
         python = str(environment_dir/'bin/python')
         progress(job, 'installing', '正在安装依赖并检查新版…')
         run([python, '-m', 'pip', 'install', '--disable-pip-version-check', '--index-url',

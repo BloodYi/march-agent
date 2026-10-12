@@ -64,6 +64,16 @@ class ProjectUpdateTests(unittest.TestCase):
             with self.assertRaises(UpdateError):self.updater.start('b'*40)
         self.assertEqual(self.updater.job()['phase'],'failed')
 
+    @unittest.skipUnless(sys.platform=='linux', 'Linux interpreter links')
+    def test_worker_uses_stable_python_outside_the_replaced_environment(self):
+        self.updater.latest='b'*40
+        base=Path(getattr(sys,'_base_executable',sys.executable)).resolve()
+        alias=self.root/'temporary-python';alias.symlink_to(base)
+        with patch('project_updates.sys._base_executable',str(alias)),patch('project_updates.acquire_lock',return_value=nullcontext()),patch('project_updates.subprocess.run',return_value=types.SimpleNamespace(returncode=0)) as run:
+            self.updater.start('b'*40)
+        self.assertIn(str(base),run.call_args.args[0])
+        self.assertNotIn(str(alias),run.call_args.args[0])
+
     def test_locked_turn_prevents_update_dispatch(self):
         self.updater.latest='b'*40
         with patch('project_updates.acquire_lock',side_effect=UpdateError('busy')),patch('project_updates.subprocess.run') as run:

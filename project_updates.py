@@ -139,7 +139,7 @@ class ProjectUpdater:
                 command = ['systemd-run', '--user', '--quiet', '--collect',
                            '--unit=march-agent-update-'+job_id, '--property=Type=oneshot',
                            '--property=RuntimeMaxSec=1500', '--working-directory='+str(self.root),
-                           getattr(sys, '_base_executable', sys.executable),
+                           str(Path(getattr(sys, '_base_executable', sys.executable)).resolve()),
                            str(self.root/'update_worker.py'), str(job_file)]
                 result = subprocess.run(command, capture_output=True, timeout=15)
                 if result.returncode:
