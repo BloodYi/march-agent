@@ -4,6 +4,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 import app
 from update_common import UpdateError
+import types
 
 
 class UpdateApiTests(unittest.TestCase):
@@ -20,6 +21,12 @@ class UpdateApiTests(unittest.TestCase):
         with patch.object(app.project_updater,'start') as start:
             response=self.client.post('/api/updates/install',json={'commit':'b'*40},headers={'Origin':'https://elsewhere.test','X-Requested-With':'MarchAgent'})
         self.assertEqual(response.status_code,403);start.assert_not_called()
+
+    def test_background_turn_blocks_install_even_before_cli_lease_is_acquired(self):
+        self.login()
+        with patch.object(app.web_turns, 'turns', {'synthetic': types.SimpleNamespace(status='running')}), patch.object(app.project_updater,'start') as start:
+            response=self.client.post('/api/updates/install',json={'commit':'b'*40},headers={'Origin':'https://testserver','X-Requested-With':'MarchAgent'})
+        self.assertEqual(response.status_code,409);start.assert_not_called()
 
     def test_deliberate_same_origin_start_uses_only_expected_commit(self):
         self.login()

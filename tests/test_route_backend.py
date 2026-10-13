@@ -14,13 +14,14 @@ import unittest
 from unittest.mock import patch
 import urllib.parse
 import uuid
+from detached_chat import TurnManager
 
 
 APP = Path(__file__).resolve().parents[1] / "app.py"
 FUNCTIONS = {
     "_sanitize_token", "_new_route_info", "_metadata_url", "_response_evidence",
     "_merge_response_evidence", "_request_log_evidence", "_parse_ndjson_line",
-    "_update_route_coverage", "_stream_agy", "_build_argv", "chat",
+    "_update_route_coverage", "_stream_agy", "_build_argv", "chat", "_turn_response",
     "inspect_selected_route",
 }
 
@@ -95,10 +96,11 @@ def load_functions(scratch, saved):
               AGY_OUTPUT_FORMAT="stream-json", AGY_PERSIST_CONVERSATIONS=True,
               _SSE_HEARTBEAT_SECONDS=15,
               _within_allowed=lambda cwd: cwd, _agy_environment=lambda: {},
-              logger=types.SimpleNamespace(warning=lambda *args: None),
+              logger=types.SimpleNamespace(warning=lambda *args: None, exception=lambda *args: None),
               StreamingResponse=Response, HTTPException=HTTPError,
               _resolve_prompt_and_session=resolve, save_conversation_async=save,
               read_session_models=lambda *args: [], read_session_thinking=lambda *args: [])
+    ns['web_turns'] = TurnManager(scratch, ns['logger'])
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec",
                  flags=__future__.annotations.compiler_flag), ns)
     return ns
@@ -137,11 +139,14 @@ class RouteBackendTests(unittest.IsolatedAsyncioTestCase):
 
     async def chat(self, model, thinking):
         req = types.SimpleNamespace(messages=[object()], model=model,
-                                    thinking=thinking, cwd=None)
+                                    thinking=thinking, cwd=None, turn_id=None, model_label='',
+                                    message_snapshot=[{'role':'user','content':'synthetic'}])
         response = await self.ns["chat"](req)
         records = []
         async for chunk in response.body_iterator:
-            records.append(json.loads(chunk.removeprefix("data: ").strip()))
+            record = json.loads(chunk.removeprefix("data: ").strip())
+            if record.get('event') != 'snapshot':
+                records.append(record)
         return records
 
     def assert_clean(self):
@@ -338,6 +343,17 @@ class RouteBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['ok'])
         self.assertTrue(bridges[0].closed)
         self.assert_clean()
+
+    async def test_web_turn_disables_native_python_and_profile_deadlines_only_for_itself(self):
+        bridges = self.enable_desktop(); self.ns['AGY_TIMEOUT'] = 1800
+        with self.launch():
+            await self.chat('medium', True)
+        self.assertEqual(bridges[-1].args[-1], 0)
+        argv = self.launches[-1][0]
+        self.assertEqual(argv[argv.index('--print-timeout') + 1], '0s')
+        ordinary = self.ns['_build_argv']('medium', prompt='synthetic')
+        self.assertEqual(ordinary[ordinary.index('--print-timeout') + 1], '1800s')
+        self.assertTrue(bridges[-1].closed)
 
     async def test_desktop_profile_closes_when_request_is_cancelled(self):
         bridges = self.enable_desktop()

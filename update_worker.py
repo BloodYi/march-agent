@@ -49,7 +49,7 @@ def prepare_source(root, stage, target):
             if member.isfile() and member.name not in current and destination.exists():
                 raise UpdateError('新版文件与本机自定义文件冲突，已保留本机文件。')
         archive.extractall(stage)
-    for name in ('app.py', 'run.py', 'project_updates.py', 'update_worker.py', 'update_common.py', 'requirements.txt'):
+    for name in ('app.py', 'run.py', 'project_updates.py', 'update_worker.py', 'update_common.py', 'requirements.txt', 'detached_chat.py'):
         if not (stage/name).is_file():
             raise UpdateError('新版缺少必需的项目文件。')
     for file in stage.rglob('*.py'):

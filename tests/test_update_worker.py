@@ -9,7 +9,7 @@ from unittest.mock import patch
 import update_worker as worker
 from update_common import UpdateError, read_json, source_path, state_directory, write_json
 
-FILES=('app.py','run.py','project_updates.py','update_common.py','update_worker.py','requirements.txt')
+FILES=('app.py','run.py','project_updates.py','update_common.py','update_worker.py','requirements.txt','detached_chat.py')
 def archive(extra=None):
     output=io.BytesIO()
     with tarfile.open(fileobj=output,mode='w') as tar:

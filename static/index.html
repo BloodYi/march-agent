@@ -1483,9 +1483,11 @@
     const conversationWriteVersions = new Map(), messageSaveQueues = new Map(), messageSaveVersions = new Map();
     const messageSaveFailures = new Set();
 
-    function normalizeMessageList(arr) {
+    let activeTurn = null;
+
+    function normalizeMessageList(arr, running = false) {
       if (!Array.isArray(arr)) return [];
-      return arr.filter(m => m && (m.content || (m.thinking && m.thinking !== "...") || (m.attachments && m.attachments.length))).map(m => {
+      return arr.filter(m => m && (m.content || (m.thinking && m.thinking !== "...") || (m.attachments && m.attachments.length) || (m.turnId && m.status === "streaming"))).map(m => {
         let content = m.content || "";
         let thinking = (m.thinking || "").trim();
         if (thinking === "...") thinking = "";
@@ -1506,17 +1508,18 @@
           requestedModel: m.requestedModel,
           routeInfo: m.routeInfo,
           metrics: m.metrics,
-          status: m.status === "streaming" ? "error" : (["complete", "error", "stopped"].includes(m.status) ? m.status : undefined),
+          turnId: m.turnId,
+          status: m.status === "streaming" ? (running ? "streaming" : "error") : (["complete", "error", "stopped"].includes(m.status) ? m.status : undefined),
         };
       });
     }
 
-    function saveMessages(cid = currentConversationId, source = messages, version = conversationWriteVersions.get(cid)) {
+    function saveMessages(cid = currentConversationId, source = messages, version = conversationWriteVersions.get(cid), transportTurnId = null) {
       if (!cid || (source === messages && pendingNew) || version !== conversationWriteVersions.get(cid)) return;
       try {
         messageSaveVersions.set(cid, (messageSaveVersions.get(cid) || 0) + 1);
         const slim = source
-          .filter(m => m && (m.role === "user" || m.role === "assistant") && (m.content || (m.thinking && m.thinking !== "...") || (m.attachments && m.attachments.length)))
+          .filter(m => m && (m.role === "user" || m.role === "assistant") && (m.content || (m.thinking && m.thinking !== "...") || (m.attachments && m.attachments.length) || (m.turnId && m.status === "streaming")))
           .map(m => ({
             role: m.role,
             content: m.content,
@@ -1529,9 +1532,10 @@
             routeInfo: m.routeInfo,
             metrics: m.metrics,
             status: m.status,
+            turnId: m.turnId,
           }));
         localStorage.setItem(msgKey(cid), JSON.stringify(slim));
-        const body = JSON.stringify({ messages: slim });
+        const body = JSON.stringify({ messages: slim, turn_id: transportTurnId });
         // Serialize snapshots for this cid; a newer send invalidates queued old
         // snapshots, while an already-issued POST finishes before any new POST.
         const submit = () => version === conversationWriteVersions.get(cid)
@@ -1570,11 +1574,12 @@
         if (!r.ok) return;
         const d = await r.json();
         if (Array.isArray(d.messages)) {
-          const clean = normalizeMessageList(d.messages);
+          const clean = normalizeMessageList(d.messages, !!d.active_turn);
           if (clean.length > 0 && currentConversationId === cid && !busy && epoch === conversationEpoch && !messageSaveQueues.has(cid) && saveVersion === messageSaveVersions.get(cid)) {
             messages = clean;
             try { localStorage.setItem(msgKey(cid), JSON.stringify(clean)); } catch (e) {}
             render();
+            if (d.active_turn) resumeTurn(d.active_turn);
           }
         }
       } catch (e) {}
@@ -1616,7 +1621,7 @@
     async function switchConversation(cid) {
       if (!cid || cid === currentConversationId) { closeSidebar(); return; }
       const epoch = ++conversationEpoch;
-      if (busy) { stop(); activeController = null; busy = false; updateComposer(); }
+      if (busy) { detachTurn(); activeController = null; busy = false; updateComposer(); }
       saveMessages();
       currentConversationId = cid;
       pendingNew = false;
@@ -1636,7 +1641,7 @@
 
     function startNewChat() {
       conversationEpoch++;
-      if (busy) { stop(); activeController = null; busy = false; updateComposer(); }
+      if (busy) { detachTurn(); activeController = null; busy = false; updateComposer(); }
       saveMessages();
       messages = [];
       currentConversationId = null;
@@ -2676,6 +2681,12 @@
 
     function handleStreamEvent(data, assistant, bodyEl) {
       if (!data || data.event === "done") return;
+      if (data.event === "snapshot") {
+        Object.assign(assistant, data.message || {});
+        if (assistant.thinkingOrder) assistant.thinkingByStep = Object.fromEntries(assistant.thinkingOrder.filter(part => part.step_index !== undefined).map(part => [part.step_index, part]));
+        refreshAssistantBody(assistant, bodyEl);
+        return;
+      }
       if (data.route_info) {
         assistant.routeInfo = data.route_info;
         if (routeMessageId === assistant._id && $("#route-modal")?.style.display === "flex") loadRouteInfo();
@@ -2781,16 +2792,123 @@
       if (payload === "[DONE]") return true;
       try {
         const data = JSON.parse(payload);
-        if (data.event === "done") return true;
+        if (data.event === "done") {
+          if (["complete", "error", "stopped"].includes(data.status)) assistant.status = data.status;
+          return true;
+        }
         const ownsView = !turn || (activeController === turn.controller && messages === turn.messages && currentConversationId === turn.cid);
-        if (turn && data.event === "init" && data.conversation_id) {
+        if (turn && ["init", "start", "snapshot"].includes(data.event) && data.conversation_id) {
           turn.cid = data.conversation_id;
+          if (activeTurn === turn) { try { localStorage.setItem("agy_pending_turn", JSON.stringify({ id: turn.id, cid: turn.cid })); } catch (_) {} }
           if ((conversationWriteVersions.get(turn.cid) || 0) < turn.version) conversationWriteVersions.set(turn.cid, turn.version);
+          if (ownsView && data.event !== "init") handleStreamEvent({ event: "init", conversation_id: data.conversation_id }, assistant, bodyEl);
         }
         if (ownsView) handleStreamEvent(data, assistant, bodyEl);
       } catch (e) {
         console.warn("Error parsing stream event", e);
       }
+    }
+
+    async function readTurnStream(resp, assistant, bodyEl, turn) {
+      if (!resp.body) throw new Error("Server returned no response stream");
+      const reader = resp.body.getReader(), dec = new TextDecoder();
+      let buf = "", completed = false;
+      try {
+        while (!completed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const events = buf.split(/\r?\n\r?\n/);
+          buf = events.pop();
+          for (const ev of events) {
+            if (handleSseBlock(ev, assistant, bodyEl, turn)) { completed = true; break; }
+          }
+        }
+        if (!completed) {
+          buf += dec.decode();
+          if (buf.trim()) completed = !!handleSseBlock(buf, assistant, bodyEl, turn);
+        }
+        if (completed) { try { await reader.cancel(); } catch (_) {} }
+        else throw new Error("Incomplete response stream");
+      } finally { try { reader.releaseLock(); } catch (_) {} }
+      return completed;
+    }
+
+    function detachTurn() {
+      if (activeTurn) activeTurn.detached = true;
+      if (activeController) activeController.abort();
+      activeTurn = null;
+      try { localStorage.removeItem("agy_pending_turn"); } catch (_) {}
+    }
+
+    async function resumeTurn(info) {
+      if (!info?.id || (busy && activeController) || info.conversation_id !== currentConversationId) return;
+      const assistant = messages.find(m => m.role === "assistant" && m.turnId === info.id);
+      if (!assistant) return;
+      busy = true;
+      const controller = new AbortController();
+      const turn = { id: info.id, controller, cid: currentConversationId, messages, version: conversationEpoch };
+      activeController = controller; activeTurn = turn;
+      conversationWriteVersions.set(turn.cid, turn.version);
+      updateComposer(); setStatus("后台任务继续运行 · 正在恢复连接…", "busy");
+      const bodyEl = chat.querySelector(".msg.assistant:last-child .body");
+      let completed = false;
+      try {
+        const resp = await apiFetch("/api/turns/" + turn.id + "/events", { signal: controller.signal });
+        if (!resp.ok) {
+          if (resp.status === 404) { assistant.status = "error"; completed = true; }
+          throw new Error("Cannot resume turn");
+        }
+        completed = await readTurnStream(resp, assistant, bodyEl, turn);
+      } catch (_) {
+        if (turn.stopRequested) assistant.status = "stopped";
+      } finally {
+        if (activeTurn !== turn || messages !== turn.messages || currentConversationId !== turn.cid) return;
+        if (completed && assistant.status === "streaming") assistant.status = "complete";
+        if (completed || turn.stopRequested) {
+          try { localStorage.removeItem("agy_pending_turn"); } catch (_) {}
+          activeTurn = null; busy = false;
+        }
+        activeController = null;
+        saveMessages(turn.cid, turn.messages, turn.version, turn.id);
+        updateComposer(); render();
+        if (!completed && !turn.stopRequested && !turn.detached) {
+          setStatus("网页连接中断，后台任务仍在运行…", "busy");
+          setTimeout(() => resumeTurn({ id: turn.id, conversation_id: turn.cid }), 2000);
+        } else setStatus(assistant.status === "error" ? "Request failed" : "Ready · streaming via agy", assistant.status === "error" ? "error" : "ready");
+      }
+    }
+
+    async function restorePendingTurn() {
+      try {
+        const pending = JSON.parse(localStorage.getItem("agy_pending_turn") || "null");
+        if (!pending || (pending.cid && currentConversationId !== pending.cid) || (busy && !activeTurn?.restoring)) return;
+        const response = await apiFetch("/api/turns/" + pending.id);
+        if (!response.ok) { localStorage.removeItem("agy_pending_turn"); return; }
+        const info = await response.json();
+        if (!info.conversation_id) {
+          if (info.status !== "running") {
+            busy = false; activeTurn = null;
+            if (info.message?.content && !messages.some(message => message.turnId === info.id && message.role === "assistant")) messages.push(info.message);
+            localStorage.removeItem("agy_pending_turn"); updateComposer(); render();
+            return;
+          }
+          busy = true;
+          activeTurn = { id: info.id, cid: null, restoring: true };
+          updateComposer(); setStatus("后台任务仍在运行 · 等待会话建立…", "busy");
+          setTimeout(() => { if (activeTurn?.id === info.id && activeTurn.restoring && !activeTurn.stopRequested) restorePendingTurn(); }, 2000);
+          return;
+        }
+        if (activeTurn?.restoring && activeTurn.id === info.id) { busy = false; activeTurn = null; }
+        if (!pending.cid) {
+          currentConversationId = info.conversation_id; pendingNew = false;
+          localStorage.setItem("agy_conversation_id", currentConversationId);
+          messages = loadMessages(currentConversationId);
+          updateConversationPill();
+        }
+        await syncMessagesFromServer(currentConversationId);
+        if (info.status !== "running") localStorage.removeItem("agy_pending_turn");
+      } catch (_) { setTimeout(restorePendingTurn, 2000); }
     }
 
     let pendingAttachments = []; // [{ id, filename, is_image, previewUrl, url, path, uploading: true/false }]
@@ -2982,7 +3100,10 @@
         status: "streaming",
       };
       messages.push(assistant);
-      const turn = { controller: activeController, messages, cid: currentConversationId, version: conversationEpoch };
+      const turn = { id: crypto.randomUUID().replaceAll("-", ""), controller: activeController, messages, cid: currentConversationId, version: conversationEpoch };
+      activeTurn = turn;
+      userMsg.turnId = turn.id; assistant.turnId = turn.id;
+      try { localStorage.setItem("agy_pending_turn", JSON.stringify({ id: turn.id, cid: turn.cid })); } catch (_) {}
       if (turn.cid) conversationWriteVersions.set(turn.cid, turn.version);
       const ownsView = () => activeController === turn.controller && messages === turn.messages && currentConversationId === turn.cid;
       const requestMessages = messages.slice(0, -1).map(({ role, content, attachments }) => ({
@@ -2995,7 +3116,7 @@
       if (bodyEl) bodyEl.classList.add("cursor");
 
       const isThinkingOn = (document.body.getAttribute("data-thinking") || "on") === "on";
-      let reader = null, streamStarted = false, streamCompleted = false;
+      let streamCompleted = false;
       try {
         const resp = await apiFetch("/api/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -3007,6 +3128,9 @@
             continue_conversation: !!turn.cid,
             user_id: userId,
             thinking: isThinkingOn,
+            turn_id: turn.id,
+            model_label: selectedModelLabel,
+            message_snapshot: messages.slice(0, -1),
           }),
           signal: turn.controller.signal,
         });
@@ -3017,58 +3141,58 @@
           if (ownsView()) setStatus("请求失败", "error");
           throw new Error(detail || `Request failed (${resp.status})`);
         }
-        if (!resp.body) throw new Error("Server returned no response stream");
-        reader = resp.body.getReader();
-        streamStarted = true;
-        const dec = new TextDecoder();
-        let buf = "";
-        while (!streamCompleted) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const events = buf.split(/\r?\n\r?\n/);
-          buf = events.pop();
-          for (const ev of events) {
-            if (handleSseBlock(ev, assistant, bodyEl, turn)) { streamCompleted = true; break; }
-          }
-        }
-        if (!streamCompleted) {
-          buf += dec.decode();
-          if (buf.trim()) streamCompleted = !!handleSseBlock(buf, assistant, bodyEl, turn);
-        }
-        if (streamCompleted) { try { await reader.cancel(); } catch (_) {} }
-        else if (assistant.status !== "error") throw new Error("Incomplete response stream");
+        streamCompleted = await readTurnStream(resp, assistant, bodyEl, turn);
       } catch (e) {
-        if (e.name === "AbortError") {
+        if (turn.stopRequested) {
           assistant.status = "stopped";
           appendError(assistant, "Stopped", "Response cancelled");
           if (ownsView()) setStatus("Response stopped", "ready");
         } else if (assistant.status !== "error") {
-          assistant.status = "error";
-          const label = streamStarted ? "连接中断" : "连接失败";
-          const detail = streamStarted ? "回复尚未完成，已保留收到的内容。请检查网络后重试。" : "未能连接到服务器。请检查网络后重试。";
-          appendError(assistant, label, detail);
-          if (ownsView()) setStatus(label, "error");
+          assistant.status = "streaming";
+          if (ownsView()) setStatus("网页连接中断，后台任务仍在运行…", "busy");
         }
       } finally {
-        if (reader) { try { reader.releaseLock(); } catch (_) {} }
         if (bodyEl) bodyEl.classList.remove("cursor");
-        if (assistant.status === "streaming") assistant.status = "complete";
+        if (streamCompleted && assistant.status === "streaming") assistant.status = "complete";
         syncAssistantText(assistant, false);
-        saveMessages(turn.cid, turn.messages, turn.version);
+        saveMessages(turn.cid, turn.messages, turn.version, turn.id);
         if (!ownsView()) return;
         activeController = null;
-        busy = false;
+        busy = !streamCompleted && !turn.stopRequested && assistant.status === "streaming";
+        if (!busy) {
+          activeTurn = null;
+          try { localStorage.removeItem("agy_pending_turn"); } catch (_) {}
+        }
         updateComposer();
         if (assistant.status === "complete") setStatus("Ready · streaming via agy", "ready");
         render();
         autoTitleConversation();
         input.focus();
+        if (busy && !turn.detached) {
+          if (turn.cid) setTimeout(() => resumeTurn({ id: turn.id, conversation_id: turn.cid }), 2000);
+          else { busy = false; setTimeout(restorePendingTurn, 2000); }
+        }
       }
     }
 
-    function stop() {
-      if (activeController) activeController.abort();
+    async function stop() {
+      const turn = activeTurn, controller = activeController;
+      if (turn) {
+        turn.stopRequested = true;
+        try {
+          const response = await apiFetch("/api/turns/" + turn.id + "/stop", { method: "POST" });
+          if (!response.ok) throw new Error("Stop failed");
+        } catch (_) {
+          turn.stopRequested = false;
+          setStatus("停止请求未送达，请联网后再点停止。后台仍在运行。", "error");
+          return;
+        }
+      }
+      if (controller) controller.abort();
+      else if (turn) {
+        busy = false; activeTurn = null; updateComposer();
+        await syncMessagesFromServer(turn.cid);
+      }
     }
 
     // "New chat" now keeps old conversations; it only starts a fresh one.
@@ -3115,6 +3239,7 @@
         renderConvList();
       }
       updateConversationPill();
+      await restorePendingTurn();
     })();
 
     loadModels();

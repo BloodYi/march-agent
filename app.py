@@ -32,6 +32,7 @@ from agy_metadata import read_session_models, read_session_thinking, read_sessio
 from agy_client_profile import DesktopProfileProxy
 from project_updates import ProjectUpdater
 from update_common import UpdateError
+from detached_chat import TurnManager
 
 logger = logging.getLogger("antigravity-chat")
 
@@ -66,6 +67,7 @@ AGY_DISABLED_MCP_SERVERS = {
 CONVERSATIONS_FILE = Path(os.getenv("AGY_CONVERSATIONS_FILE", str(Path(__file__).parent / ".antigravity_conversations.json")))
 MESSAGES_DIR = Path(os.getenv("AGY_MESSAGES_DIR", str(Path(__file__).parent / "data" / "messages")))
 MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
+web_turns = TurnManager(MESSAGES_DIR, logger)
 
 # Neutral working dir so agy does not pull in unrelated repo context.
 SCRATCH = Path(os.getenv("AGY_SCRATCH", str(Path(__file__).parent / "scratch")))
@@ -629,6 +631,8 @@ async def updates_install(request: Request, req: UpdateRequest):
     if ((origin and origin.rstrip('/') != expected)
             or request.headers.get('x-requested-with') != 'MarchAgent'):
         raise HTTPException(status_code=403, detail='请在本站的更新窗口中操作。')
+    if any(turn.status == 'running' for turn in web_turns.turns.values()):
+        raise HTTPException(status_code=409, detail='后台任务仍在运行，请完成或明确停止后再更新。')
     try:
         return await asyncio.to_thread(project_updater.start, req.commit)
     except UpdateError as error:
@@ -984,6 +988,9 @@ class ChatRequest(BaseModel):
     continue_conversation: bool | None = None
     user_id: str | None = "default"
     thinking: bool | None = None
+    turn_id: str | None = None
+    message_snapshot: list[dict] | None = None
+    model_label: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -1061,6 +1068,7 @@ def _build_argv(
     continue_last: bool = False,
     target_cwd: str | None = None,
     effort: str | None = None,
+    timeout: int | None = None,
 ) -> list[str]:
     # agy treats the token after -p as its prompt, even when that token is a flag.
     # Attach the prompt to -p so permission and output flags cannot be swallowed.
@@ -1080,7 +1088,7 @@ def _build_argv(
         argv += ["--conversation", clean_cid]
     elif continue_last:
         argv.append("--continue")
-    argv += ["--print-timeout", f"{AGY_TIMEOUT}s"]
+    argv += ["--print-timeout", f"{AGY_TIMEOUT if timeout is None else timeout}s"]
     if prompt:
         argv.append(f"-p={prompt}")
     return argv
@@ -1304,8 +1312,10 @@ async def _stream_agy(
     user_id: str = "default",
     effort: str | None = None,
     persist_conversation: bool = True,
+    timeout: int | None = None,
 ):
     """Run agy and yield structured events (dict) as NDJSON or text chunks arrive."""
+    turn_timeout = AGY_TIMEOUT if timeout is None else timeout
     target_cwd = _within_allowed(cwd) if cwd else None
     if not target_cwd:
         target_cwd = str(SCRATCH)
@@ -1317,6 +1327,7 @@ async def _stream_agy(
         continue_last=continue_last,
         target_cwd=target_cwd,
         effort=effort,
+        timeout=timeout,
     )
     route_info = _new_route_info(uuid.uuid4().hex, model)
     log_dir = tempfile.TemporaryDirectory(prefix="agy-route-", dir=str(SCRATCH))
@@ -1332,7 +1343,7 @@ async def _stream_agy(
         if run_env.get("AGY_UPSTREAM_PROFILE", "native").lower() == "desktop":
             profile_proxy = DesktopProfileProxy(
                 run_env.get("CLOUD_CODE_URL", "https://daily-cloudcode-pa.googleapis.com"),
-                run_env.get("AGY_DESKTOP_VERSION", "2.22.0"), AGY_TIMEOUT,
+                run_env.get("AGY_DESKTOP_VERSION", "2.22.0"), turn_timeout,
             )
             run_env["CLOUD_CODE_URL"] = profile_proxy.url
         proc = await asyncio.create_subprocess_exec(
@@ -1364,7 +1375,7 @@ async def _stream_agy(
     buffered_line = ""
     stderr_tail = bytearray()
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    deadline = asyncio.get_running_loop().time() + AGY_TIMEOUT if AGY_TIMEOUT > 0 else None
+    deadline = asyncio.get_running_loop().time() + turn_timeout if turn_timeout > 0 else None
 
     async def _drain_stderr() -> None:
         # Must keep reading stderr concurrently with stdout — if the child fills the
@@ -1493,7 +1504,7 @@ async def _stream_agy(
                 pass
         err_txt = stderr_tail.decode(errors="replace").strip()
         detail = f" — {err_txt}" if err_txt else ""
-        yield {"event": "error", "error": f"antigravity-chat: timed out after {AGY_TIMEOUT}s{detail}"}
+        yield {"event": "error", "error": f"antigravity-chat: timed out after {turn_timeout}s{detail}"}
     except Exception as exc:
         stream_error = exc
     finally:
@@ -1630,6 +1641,7 @@ async def delete_conversation(user_id: str = "default") -> dict:
 
 class SaveMessagesRequest(BaseModel):
     messages: list[dict]
+    turn_id: str | None = None
 
 
 @app.get("/api/conversations/{cid}/messages")
@@ -1641,8 +1653,10 @@ async def get_conversation_messages_ep(cid: str) -> dict:
     msg_file = MESSAGES_DIR / f"{clean_cid}.json"
     if msg_file.exists():
         try:
-            msgs = json.loads(msg_file.read_text())
-            return {"conversation_id": clean_cid, "messages": msgs}
+            msgs = json.loads(msg_file.read_text(encoding="utf-8"))
+            turn = web_turns.for_conversation(clean_cid)
+            return {"conversation_id": clean_cid, "messages": msgs,
+                    "active_turn": turn.info() if turn and turn.status == "running" else None}
         except Exception as exc:
             logger.warning(f"Failed to read messages file {msg_file}: {exc}")
 
@@ -1653,7 +1667,7 @@ async def get_conversation_messages_ep(cid: str) -> dict:
         parsed = parse_transcript_to_messages(brain_log)
         if parsed:
             try:
-                msg_file.write_text(json.dumps(parsed, ensure_ascii=False, indent=2))
+                msg_file.write_text(json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception:
                 pass
             return {"conversation_id": clean_cid, "messages": parsed}
@@ -1670,12 +1684,14 @@ async def save_conversation_messages_ep(cid: str, req: SaveMessagesRequest) -> d
     msg_file = MESSAGES_DIR / f"{clean_cid}.json"
     tmp_file = msg_file.with_suffix(".tmp")
     try:
-        tmp_file.write_text(json.dumps(req.messages, ensure_ascii=False, indent=2))
+        snapshot = web_turns.protect(clean_cid, req.messages, req.turn_id)
+        stored = web_turns.serializable(snapshot) if web_turns.for_conversation(clean_cid) else snapshot
+        tmp_file.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp_file.replace(msg_file)
     except Exception as exc:
         logger.warning(f"Failed to save messages for {clean_cid}: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
-    return {"status": "saved", "conversation_id": clean_cid, "count": len(req.messages)}
+    return {"status": "saved", "conversation_id": clean_cid, "count": len(snapshot)}
 
 
 @app.get("/api/models")
@@ -2093,61 +2109,59 @@ async def delete_account_ep(account_id: str) -> dict:
 _SSE_HEARTBEAT_SECONDS = 15
 
 
+def _turn_response(turn, cursor: int = 0):
+    async def event_gen():
+        # Cancelling this subscriber never cancels the separately owned CLI task.
+        async for event in turn.events(cursor, _SSE_HEARTBEAT_SECONDS):
+            yield ": keep-alive\n\n" if event is None else f"data: {json.dumps(event)}\n\n"
+    return StreamingResponse(event_gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform",
+                                      "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/turns/{turn_id}")
+async def get_web_turn(turn_id: str):
+    turn = web_turns.turns.get(turn_id)
+    if not turn:
+        raise HTTPException(status_code=404, detail="Turn not found")
+    return dict(turn.info(), message=turn.snapshot()["message"])
+
+
+@app.get("/api/turns/{turn_id}/events")
+async def resume_web_turn(turn_id: str, cursor: int = 0):
+    turn = web_turns.turns.get(turn_id)
+    if not turn:
+        raise HTTPException(status_code=404, detail="Turn not found")
+    return _turn_response(turn, max(0, cursor))
+
+
+@app.post("/api/turns/{turn_id}/stop")
+async def stop_web_turn(turn_id: str):
+    result = await web_turns.stop(turn_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Turn not found")
+    return result
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    """SSE stream of the assistant reply for the custom UI."""
+    """Start a server-owned turn and subscribe the custom UI to its events."""
     if not req.messages:
         raise HTTPException(status_code=422, detail="messages must be non-empty")
     
     prompt, cid, continue_last, user_id = await _resolve_prompt_and_session(req)
 
-    async def event_gen():
-        stream = _stream_agy(
+    def stream():
+        return _stream_agy(
             prompt=prompt, model=req.model, cwd=req.cwd, conversation_id=cid,
-            continue_last=continue_last, user_id=user_id,
+            continue_last=continue_last, user_id=user_id, timeout=0,
         )
-        pending = None
-        try:
-            yield f"data: {json.dumps({'event': 'start'})}\n\n"
-            while True:
-                if pending is None:
-                    pending = asyncio.create_task(anext(stream))
-                # A heartbeat must not cancel the CLI read or start another turn.
-                ready, _ = await asyncio.wait({pending}, timeout=_SSE_HEARTBEAT_SECONDS)
-                if not ready:
-                    yield ": keep-alive\n\n"
-                    continue
-                finished, pending = pending, None
-                try:
-                    ev = finished.result()
-                except StopAsyncIteration:
-                    break
-                yield f"data: {json.dumps(ev)}\n\n"
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Chat stream failed (%s)", type(exc).__name__)
-            yield f"data: {json.dumps({'event': 'error', 'error': str(exc)})}\n\n"
-        finally:
-            from anyio import CancelScope
-            # The HTTP disconnect scope must not interrupt AGY's awaited cleanup.
-            with CancelScope(shield=True):
-                if pending is not None:
-                    pending.cancel()
-                    try:
-                        await pending
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                await stream.aclose()
-        yield f"data: {json.dumps({'event': 'done'})}\n\n"
-
-    return StreamingResponse(
-        event_gen(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    snapshot = req.message_snapshot or [message.model_dump() for message in req.messages]
+    try:
+        turn = web_turns.start(stream, cid, snapshot, req.model, req.model_label or "", req.turn_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    return _turn_response(turn)
 
 
 # --- Bonus: OpenAI-compatible endpoint so other tools can reuse this too ----- #

@@ -17,9 +17,9 @@ class Reply:
 
 class Upstream:
     calls=[];reply=Reply;fail=False
-    def __init__(self,host,timeout):self.host=host;self.sock=None;self.closed=False
+    def __init__(self,host,timeout):self.host=host;self.timeout=timeout;self.sock=None;self.closed=False
     def request(self,method,path,body,headers):
-        self.calls.append({'host':self.host,'method':method,'path':path,'body':body,'headers':headers})
+        self.calls.append({'host':self.host,'timeout':self.timeout,'method':method,'path':path,'body':body,'headers':headers})
         if self.fail:raise OSError('synthetic upstream failure')
     def getresponse(self):return type(self).reply()
     def close(self):self.closed=True
@@ -49,6 +49,12 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(self.send(iter([b'{"model":',b'"medium"}']),True)[0],200)
         self.assertEqual(Upstream.calls[0]['body'],b'{"model":"medium"}')
         self.assertNotIn('Transfer-Encoding',Upstream.calls[0]['headers'])
+    def test_web_zero_timeout_has_no_network_deadline_and_normal_limits_remain(self):
+        self.send();self.assertEqual(Upstream.calls[-1]['timeout'],5)
+        self.client.close();self.proxy.close()
+        self.proxy=profile.DesktopProfileProxy(timeout=0)
+        self.client=http.client.HTTPConnection('127.0.0.1',self.proxy.server.server_port,timeout=5)
+        self.send();self.assertIsNone(Upstream.calls[-1]['timeout'])
     def test_private_loopback_prefix_is_required(self):
         self.assertEqual(self.send(path='/v1internal:streamGenerateContent')[0],404)
         self.assertEqual(Upstream.calls,[])

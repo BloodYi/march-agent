@@ -26,7 +26,7 @@ class DesktopProfileProxy:
         if not re.fullmatch(r"\d+\.\d+\.\d+", version):
             raise ValueError("Invalid AGY_DESKTOP_VERSION")
         self.host, self.version = target.hostname, version
-        self.timeout = timeout if timeout > 0 else 1800
+        self.timeout = None if timeout == 0 else (timeout if timeout > 0 else 1800)
         self.prefix = "/" + secrets.token_urlsafe(32)
         self.connections: set[http.client.HTTPSConnection] = set()
         self.lock = threading.Lock()
