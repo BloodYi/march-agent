@@ -152,6 +152,45 @@ class ModelMetadataTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertEqual(metadata.generation_models(blob, observed, executions), [])
 
+    def test_large_generation_envelopes_keep_only_verified_model_fields(self):
+        padding = field(8, b"unrelated payload " * 80000)
+        for inside_chat in (False, True):
+            with self.subTest(inside_chat=inside_chat):
+                blob = (field(1, field(19, b"future-exp-z") + padding)
+                        + field(2, b"\x07") + field(4, b"run-a")) if inside_chat else (
+                            generation("future-exp-z") + padding)
+                self.assertGreater(len(blob), metadata.MAX_BLOB)
+                records = metadata.generation_models(blob, {7}, {7: "run-a"})
+                self.assertEqual([r["value"] for r in records], ["future-exp-z"])
+                self.assertEqual(metadata.generation_models(blob, {7}, {7: "other-run"}), [])
+                with self.assertRaises(ValueError):
+                    metadata._fields(blob, {19})
+
+    def test_large_generation_envelopes_are_read_from_session_database(self):
+        cid = str(uuid.uuid4())
+        chat = field(19, b"future-exp-z") + field(8, b"x" * (metadata.MAX_BLOB + 200000))
+        blob = field(1, chat) + field(2, b"\x07") + field(4, b"run-a")
+        path = self.database(cid, [generation("history", (1,), "old-run"), blob],
+                             ((1, "old-run"), (7, "run-a")))
+        before = path.read_bytes()
+        records = metadata.read_session_models(self.temp.name, cid, {7})
+        self.assertEqual([r["value"] for r in records], ["future-exp-z"])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_generation_envelope_limit_remains_bounded(self):
+        blob = generation("oversized") + field(8, b"x" * (8 * metadata.MAX_BLOB))
+        self.assertEqual(metadata.generation_models(blob, {7}, {7: "run-a"}), [])
+        cid = str(uuid.uuid4())
+        self.database(cid, [blob, generation("within-limit")])
+        self.assertEqual([r["value"] for r in metadata.read_session_models(self.temp.name, cid, {7})],
+                         ["within-limit"])
+
+    def test_generation_scan_total_budget_stays_sixteen_mebibytes(self):
+        blob = generation("within-row-limit") + field(8, b"x" * (6 * metadata.MAX_BLOB))
+        cid = str(uuid.uuid4())
+        self.database(cid, [blob, blob, blob])
+        self.assertEqual(metadata.read_session_models(self.temp.name, cid, {7}), [])
+
     def test_session_model_rejects_malformed_wire_and_string_limits(self):
         bad = [b"\x80", b"\x0a\x20short", b"\x0b", b"\x10" + b"\xff" * 11,
                field(1, field(19, b"\xff")) + field(2, b"\x07"),

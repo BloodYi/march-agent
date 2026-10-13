@@ -6,6 +6,9 @@ import sqlite3
 
 
 MAX_BLOB = 1024 * 1024
+# Generation envelopes also contain prompt/tool payloads. Only model and link
+# fields are retained; step/thinking and aggregate scan limits stay unchanged.
+MAX_GENERATION_BLOB = 8 * MAX_BLOB
 MAX_FIELDS = 4096
 MAX_STEPS = 2048
 MAX_ROWS = 4096
@@ -26,8 +29,8 @@ def _varint(data, position):
     raise ValueError("oversized varint")
 
 
-def _fields(data, wanted=None):
-    if not isinstance(data, bytes) or len(data) > MAX_BLOB:
+def _fields(data, wanted=None, *, max_blob=MAX_BLOB):
+    if not isinstance(data, bytes) or len(data) > max_blob:
         raise ValueError("invalid metadata blob")
     fields, position = {}, 0
     count = 0
@@ -70,7 +73,7 @@ def _string(fields, number):
 
 def _generation_link(data, observed_steps, execution_ids):
     try:
-        root = _fields(data, {1, 2, 4})
+        root = _fields(data, {1, 2, 4}, max_blob=MAX_GENERATION_BLOB)
         indices = []
         for wire, value in root.get(2, []):
             if wire == 0:
@@ -106,7 +109,7 @@ def _model_records(link):
         indices, execution, chat = link
         if chat is None:
             return []
-        model = _fields(chat, {19, 22})
+        model = _fields(chat, {19, 22}, max_blob=MAX_GENERATION_BLOB)
         return [{"field": "gen_metadata.chat_model." + field, "value": value,
                  "source": "agy_session_db", "step_indices": sorted(set(indices)),
                  "execution_id": execution}
@@ -157,7 +160,7 @@ def _generation_links(connection, observed_steps, execution_ids):
         return []
     links, total = [], 0
     rows = connection.execute("SELECT CASE WHEN typeof(data)='blob' AND length(data)<=? THEN data END "
-                              "FROM gen_metadata LIMIT ?", (MAX_BLOB, MAX_ROWS + 1))
+                              "FROM gen_metadata LIMIT ?", (MAX_GENERATION_BLOB, MAX_ROWS + 1))
     for count, (data,) in enumerate(rows):
         if count >= MAX_ROWS:
             return []
